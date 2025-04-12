@@ -1,6 +1,8 @@
 # cypher.htb
 https://app.hackthebox.com/machines/Cypher
 
+Scanning
+
 ```
 Hexada@hexada ~$ sudo nmap -sS -sC -sV -p- -T5 --max-rate 10000 -oN cypher.htb                                                                                                             
 
@@ -23,8 +25,43 @@ Service detection performed. Please report any incorrect results at https://nmap
 # Nmap done at Sun Apr  6 17:09:05 2025 -- 1 IP address (1 host up) scanned in 32.90 seconds
 ```
 
+Let's to bruteforce the directories
+
+```
+Hexada@hexada ~$ gobuster dir -u http://cypher.htb -w ~/app/pentesting-wordlists/SecLists/Discovery/Web-Content/directory-list-2.3-medium.txt                                              
+===============================================================
+Gobuster v3.6
+by OJ Reeves (@TheColonial) & Christian Mehlmauer (@firefart)
+===============================================================
+[+] Url:                     http://cypher.htb
+[+] Method:                  GET
+[+] Threads:                 10
+[+] Wordlist:                /home/Hexada/app/pentesting-wordlists/SecLists/Discovery/Web-Content/directory-list-2.3-medium.txt
+[+] Negative Status codes:   404
+[+] User Agent:              gobuster/3.6
+[+] Timeout:                 10s
+===============================================================
+Starting gobuster in directory enumeration mode
+===============================================================
+/index                (Status: 200) [Size: 4562]
+/about                (Status: 200) [Size: 4986]
+/login                (Status: 200) [Size: 3671]
+/demo                 (Status: 307) [Size: 0] [--> /login]
+/api                  (Status: 307) [Size: 0] [--> /api/docs]
+/testing              (Status: 301) [Size: 178] [--> http://cypher.htb/testing/]
+```
+
+The `/testing` directory is an interesting find, let's check it
+
 ![image](https://github.com/user-attachments/assets/435e6de0-8852-4ce1-8c56-4fb264117148)
 
+Java archives (JAR files) contain:
+
+- **.class files** — compiled **Java** bytecode  
+- **metadata** — stored in `META-INF/MANIFEST.MF`  
+- **resources** — like configuration files, images, and more
+
+We need to extract this archive to explore its contents
 ```
 Hexada@hexada ~/app/vrm/cypher$ jar tf custom-apoc-extension-1.0-SNAPSHOT.jar                                                                                                              
 
@@ -45,9 +82,9 @@ META-INF/maven/com.cypher.neo4j/custom-apoc-extension/pom.xml
 META-INF/maven/com.cypher.neo4j/custom-apoc-extension/pom.properties
 ```
 
-https://www.benf.org/other/cfr/cfr-0.152.jar
+[cfr-0.152.jar](https://www.benf.org/other/cfr/cfr-0.152.jar) is a **Java** decompiler tool that allows you to decompile compiled **Java** bytecode (in `.class` files) back into human-readable **Java** source code
 
-```
+```java
 Hexada@hexada ~/app/vrm/cypher$ java -jar cfr-0.152.jar CustomFunctions.class
                                                                                                         
 /*
@@ -111,6 +148,76 @@ public class CustomFunctions {
     }
 }
 ```
+
+This **Java** class defines a function, `getUrlStatusCode`, which implements a **Neo4j** procedure. The procedure takes a **URL** as an argument and uses the `curl` command to retrieve the **HTTP** status code for the specified **URL**
+
+The relevant line of code is:
+```
+Object[] command = new String[]{"/bin/sh", "-c", "curl -s -o /dev/null --connect-timeout 1 -w %{http_code} " + (String)url};
+```
+
+This line constructs a shell command that runs `curl` on the given **URL** to get its **HTTP** status code. However, the key point here is that since we’re constructing a shell command, we can inject additional commands by using the `;` symbol.
+
+**The Role of ; in the Command:**
+
+In **Unix-like** operating systems, the `;` character is used to separate multiple commands in a single line. For example:
+```html
+Hexada@hexada ~$ curl http://example.com; echo "hello world"
+                                                                                                                     3 ↵  
+<!doctype html>
+<html>
+<head>
+    <title>Example Domain</title>
+
+    <meta charset="utf-8" />
+    <meta http-equiv="Content-type" content="text/html; charset=utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style type="text/css">
+    body {
+        background-color: #f0f0f2;
+        margin: 0;
+        padding: 0;
+        font-family: -apple-system, system-ui, BlinkMacSystemFont, "Segoe UI", "Open Sans", "Helvetica Neue", Helvetica, Arial, sans-serif;
+        
+    }
+    div {
+        width: 600px;
+        margin: 5em auto;
+        padding: 2em;
+        background-color: #fdfdff;
+        border-radius: 0.5em;
+        box-shadow: 2px 3px 7px 2px rgba(0,0,0,0.02);
+    }
+    a:link, a:visited {
+        color: #38488f;
+        text-decoration: none;
+    }
+    @media (max-width: 700px) {
+        div {
+            margin: 0 auto;
+            width: auto;
+        }
+    }
+    </style>    
+</head>
+
+<body>
+<div>
+    <h1>Example Domain</h1>
+    <p>This domain is for use in illustrative examples in documents. You may use this
+    domain in literature without prior coordination or asking for permission.</p>
+    <p><a href="https://www.iana.org/domains/example">More information...</a></p>
+</div>
+</body>
+</html>
+hello world
+```
+
+This command will first fetch the webpage from `http://example.com`, and after that, it will execute the echo `"hello world"` command, which prints `"hello world"` to the terminal.
+
+Now, if we can somehow activate the `getUrlStatusCode` function on the **server-side** and provide a **URL** with a payload, we can potentially execute additional commands via the injected `;`.
+
+One possible way we can do this - it's a **neo4j** injection, because **neo4j** give opporturnity for users to run the **java** code, if we find the **neo4j** we will can implement my plan
 
 ![image](https://github.com/user-attachments/assets/7589e136-7d9e-488d-afed-f91c1f689b7b)
 
